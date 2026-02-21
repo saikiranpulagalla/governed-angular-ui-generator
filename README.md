@@ -61,7 +61,6 @@ graph TD
 
 ### Self-Correction Loop
 
-
 ```mermaid
 sequenceDiagram
     participant U as User
@@ -71,37 +70,33 @@ sequenceDiagram
     participant DS as Design System
 
     U->>O: Natural language prompt
-    
-    rect rgb(240, 240, 255)
-        Note over O,V: Iteration 1
-        O->>G: Generate code
-        G->>DS: Load design tokens
-        DS-->>G: Colors, spacing, fonts...
-        G->>G: Call LLM with constraints
-        G-->>O: Generated code
-        O->>V: Validate code
-        V->>DS: Check compliance
-        DS-->>V: Allowed values
-        V->>V: Check syntax & structure
-        V-->>O: Validation report
-    end
-    
+
+    Note over O,V: Iteration 1
+    O->>G: Generate code
+    G->>DS: Load design tokens
+    DS-->>G: Colors, spacing, fonts
+    G->>G: Call LLM with constraints
+    G-->>O: Generated code
+    O->>V: Validate code
+    V->>DS: Check compliance
+    DS-->>V: Allowed values
+    V->>V: Check syntax & structure
+    V-->>O: Validation report
+
     alt Code is valid
-        O-->>U: ✅ Success - Return code
+        O-->>U: Success - Return code
     else Code is invalid
-        rect rgb(255, 240, 240)
-            Note over O,V: Iteration 2 (Self-Correction)
-            O->>G: Fix code with error feedback
-            G->>G: Correct specific errors
-            G-->>O: Fixed code
-            O->>V: Re-validate
-            V-->>O: Validation report
-        end
-        
+        Note over O,V: Iteration 2 (Self-Correction)
+        O->>G: Fix code with error feedback
+        G->>G: Correct specific errors
+        G-->>O: Fixed code
+        O->>V: Re-validate
+        V-->>O: Validation report
+
         alt Fixed code is valid
-            O-->>U: ✅ Success - Return code
-        else Still invalid & retries exhausted
-            O-->>U: ❌ Failure - Return errors
+            O-->>U: Success - Return code
+        else Retries exhausted
+            O-->>U: Failure - Return errors
         end
     end
 ```
