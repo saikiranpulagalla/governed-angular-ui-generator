@@ -1,0 +1,12 @@
+{
+  "colors": {
+    "background": "#0f172a",
+    "primary": "#6366f1",
+    "textPrimary": "#f1f5f9",
+    "textSecondary": "#94a3b8"
+  },
+  "cardBackground": "rgba(255, 255, 255, 0.15)",
+  "borderRadius": "8px",
+  "fontFamily": "Inter",
+  "boxShadow": "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
+}

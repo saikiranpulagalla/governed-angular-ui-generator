@@ -1,0 +1,5 @@
+google-generativeai>=0.8.0
+python-dotenv>=1.0.0
+
+# Optional: For Streamlit inspection UI (demo/streamlit_app.py)
+# streamlit>=1.28.0
