@@ -301,9 +301,13 @@ Output the complete corrected component code."""
         code = re.sub(r'font-family:\s*[^;]+;', '', code)
         code = re.sub(r"['\"]font-family['\"]:\s*['\"][^'\"]+['\"]", '', code)
         
-        # NORMALIZATION 2: Normalize spacing CSS variables to literal values
-        # LLM pretraining bias causes it to emit var(--spacing-*) even when literals required
-        spacing_map = {
+        # NORMALIZATION 2: Replace ALL design token CSS variables with literal values.
+        # The LLM emits not just var(--spacing-*) but also var(--borderRadius-*),
+        # var(--fontSize-*), var(--boxShadow-*) etc. None are valid since the
+        # validator requires exact literal values. Cover all naming conventions
+        # (camelCase and kebab-case) the LLM might use.
+        css_var_map = {
+            # Spacing
             'var(--spacing-xs)': '0.25rem',
             'var(--spacing-sm)': '0.5rem',
             'var(--spacing-input)': '0.75rem',
@@ -311,8 +315,56 @@ Output the complete corrected component code."""
             'var(--spacing-lg)': '1.5rem',
             'var(--spacing-xl)': '2rem',
             'var(--spacing-2xl)': '3rem',
+            # Border radius (camelCase + kebab-case)
+            'var(--borderRadius-sm)': '4px',
+            'var(--borderRadius-md)': '8px',
+            'var(--borderRadius-lg)': '12px',
+            'var(--borderRadius-xl)': '16px',
+            'var(--borderRadius-full)': '9999px',
+            'var(--border-radius-sm)': '4px',
+            'var(--border-radius-md)': '8px',
+            'var(--border-radius-lg)': '12px',
+            'var(--border-radius-xl)': '16px',
+            'var(--border-radius-full)': '9999px',
+            # Box shadow (camelCase + kebab-case)
+            'var(--boxShadow-sm)': '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+            'var(--boxShadow-md)': '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+            'var(--boxShadow-lg)': '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+            'var(--boxShadow-glassmorphism)': '0 8px 32px 0 rgba(31, 38, 135, 0.37)',
+            'var(--boxShadow-inner)': 'inset 0 2px 4px 0 rgba(0, 0, 0, 0.06)',
+            'var(--box-shadow-sm)': '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+            'var(--box-shadow-md)': '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+            'var(--box-shadow-lg)': '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+            'var(--box-shadow-glassmorphism)': '0 8px 32px 0 rgba(31, 38, 135, 0.37)',
+            'var(--box-shadow-inner)': 'inset 0 2px 4px 0 rgba(0, 0, 0, 0.06)',
+            # Font size (camelCase + kebab-case)
+            'var(--fontSize-xs)': '0.75rem',
+            'var(--fontSize-sm)': '0.875rem',
+            'var(--fontSize-base)': '1rem',
+            'var(--fontSize-lg)': '1.125rem',
+            'var(--fontSize-xl)': '1.25rem',
+            'var(--fontSize-2xl)': '1.5rem',
+            'var(--fontSize-3xl)': '1.875rem',
+            'var(--fontSize-4xl)': '2.25rem',
+            'var(--font-size-xs)': '0.75rem',
+            'var(--font-size-sm)': '0.875rem',
+            'var(--font-size-base)': '1rem',
+            'var(--font-size-lg)': '1.125rem',
+            'var(--font-size-xl)': '1.25rem',
+            'var(--font-size-2xl)': '1.5rem',
+            'var(--font-size-3xl)': '1.875rem',
+            'var(--font-size-4xl)': '2.25rem',
+            # Colors
+            'var(--color-primary)': '#6366f1',
+            'var(--color-secondary)': '#8b5cf6',
+            'var(--color-accent)': '#ec4899',
+            'var(--color-background)': '#0f172a',
+            'var(--color-text)': '#f1f5f9',
+            'var(--color-text-secondary)': '#94a3b8',
+            'var(--color-error)': '#ef4444',
+            'var(--color-success)': '#10b981',
         }
-        for css_var, literal_value in spacing_map.items():
+        for css_var, literal_value in css_var_map.items():
             code = code.replace(css_var, literal_value)
         
         # NORMALIZATION 3: Strip erroneous # prefix from spacing/numeric values
