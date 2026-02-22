@@ -25,147 +25,185 @@ class CodeValidator:
         with open(design_system_path, 'r') as f:
             self.design_system = json.load(f)
         
-        # Build STRICT allowed value sets
         self._build_allowed_tokens()
         
     def _build_allowed_tokens(self):
-        """Build strict sets of allowed tokens from design system."""
-        # STRICT: Only use values explicitly listed in design-system.json
-        
-        # Colors - ONLY these exact values allowed
+        """
+        Build strict sets of allowed tokens from design system.
+        Handles both flat string values and nested dict structures.
+        """
         self.allowed_hex_colors = set()
+        self.allowed_rgba_colors = set()
+        
+        # Colors
         colors = self.design_system.get("colors", {})
         for value in colors.values():
-            if isinstance(value, str) and value.startswith('#'):
-                self.allowed_hex_colors.add(value.lower())
+            if isinstance(value, str):
+                if value.startswith('#'):
+                    self.allowed_hex_colors.add(value.lower())
+                elif value.lower().startswith('rgba') or value.lower().startswith('rgb'):
+                    self.allowed_rgba_colors.add(value.lower().replace(" ", ""))
         
-        # Card background - ONLY this exact rgba allowed
-        self.allowed_rgba_colors = set()
+        # Card background
         card_bg = self.design_system.get("cardBackground", "")
-        if card_bg.startswith('rgba'):
-            # Normalize: remove all spaces for comparison
+        if card_bg.lower().startswith('rgba') or card_bg.lower().startswith('rgb'):
             self.allowed_rgba_colors.add(card_bg.lower().replace(" ", ""))
         
-        # Also extract rgba from box-shadow (it contains rgba values)
-        box_shadow = self.design_system.get("boxShadow", "")
-        rgba_matches = re.findall(r'rgba?\([^)]+\)', box_shadow)
-        for rgba in rgba_matches:
-            self.allowed_rgba_colors.add(rgba.lower().replace(" ", ""))
+        # Border radius - supports both dict and flat string
+        self.allowed_border_radius = set()
+        border_radius = self.design_system.get("borderRadius", {})
+        if isinstance(border_radius, dict):
+            for value in border_radius.values():
+                self.allowed_border_radius.add(value.lower())
+        elif isinstance(border_radius, str):
+            self.allowed_border_radius.add(border_radius.lower())
         
-        # Border radius - ONLY this exact value allowed
-        self.allowed_border_radius = {self.design_system.get("borderRadius", "").lower()}
+        # Box shadow - supports both dict and flat string
+        self.allowed_shadows = set()
+        self.allowed_shadows_normalized = set()
+        box_shadow = self.design_system.get("boxShadow", {})
+        if isinstance(box_shadow, dict):
+            for value in box_shadow.values():
+                self.allowed_shadows.add(value.lower().strip())
+                self.allowed_shadows_normalized.add(self._normalize_shadow(value))
+        elif isinstance(box_shadow, str):
+            self.allowed_shadows.add(box_shadow.lower().strip())
+            self.allowed_shadows_normalized.add(self._normalize_shadow(box_shadow))
         
-        # Box shadow - ONLY this exact value allowed
-        self.allowed_shadows = {box_shadow.lower().strip()}
-        # Also store normalized version for comparison
-        self.allowed_shadows_normalized = {self._normalize_shadow(box_shadow)}
+        # Extract rgba values embedded inside shadow values so shadow rgba
+        # components don't trigger the rgba validator
+        for shadow_value in self.allowed_shadows:
+            rgba_matches = re.findall(r'rgba?\([^)]+\)', shadow_value)
+            for rgba in rgba_matches:
+                self.allowed_rgba_colors.add(rgba.lower().replace(" ", ""))
         
-        # Font family - ONLY this exact value allowed (no commas, no fallbacks)
+        # Font family
         self.allowed_font_family = self.design_system.get("fontFamily", "").strip()
+        
+        # Font sizes - supports both dict and flat
+        self.allowed_font_sizes = set()
+        font_sizes = self.design_system.get("fontSize", {})
+        if isinstance(font_sizes, dict):
+            for value in font_sizes.values():
+                self.allowed_font_sizes.add(value.lower())
+        elif isinstance(font_sizes, str):
+            self.allowed_font_sizes.add(font_sizes.lower())
+        
+        # Spacing - supports both dict and flat
+        self.allowed_spacing = set()
+        spacing = self.design_system.get("spacing", {})
+        if isinstance(spacing, dict):
+            for value in spacing.values():
+                self.allowed_spacing.add(value.lower())
+        elif isinstance(spacing, str):
+            self.allowed_spacing.add(spacing.lower())
         
     def _normalize_shadow(self, shadow: str) -> str:
         """
         Normalize shadow string for comparison.
         Handles spacing variations in rgba() and between values.
-        
-        Args:
-            shadow: Shadow string to normalize
-            
-        Returns:
-            Normalized shadow string
         """
         shadow = shadow.lower().strip()
         shadow = re.sub(r'\s+', ' ', shadow)
         
         def normalize_rgba(match):
-            rgba_str = match.group(0)
-            return rgba_str.replace(" ", "")
+            return match.group(0).replace(" ", "")
         
         shadow = re.sub(r'rgba?\([^)]+\)', normalize_rgba, shadow)
-        
         return shadow
     
-    def extract_colors(self, code: str) -> List[str]:
+    def validate_spacing_value(self, spacing_value: str) -> List[str]:
         """
-        Extract ALL hex colors from code.
+        Validate a spacing value, handling CSS shorthand notation.
         
+        CSS spacing shorthand splits like:
+          "1rem"           -> ["1rem"]
+          "0.5rem 1rem"    -> ["0.5rem", "1rem"]
+          "1rem 2rem 1rem" -> ["1rem", "2rem", "1rem"]
+        
+        Args:
+            spacing_value: Raw spacing value string from CSS
+            
         Returns:
-            List of hex color strings found in code
+            List of invalid parts (empty list = all valid)
         """
-        hex_pattern = r'#[0-9a-fA-F]{3,8}\b'
-        return re.findall(hex_pattern, code)
+        parts = spacing_value.strip().lower().split()
+        invalid = [part for part in parts if part not in self.allowed_spacing]
+        return invalid
     
-    def extract_rgba(self, code: str) -> List[str]:
+    def validate_font_size_value(self, font_size_value: str) -> bool:
         """
-        Extract ALL rgba/rgb color values from code.
+        Validate a font-size value.
+        Handles shorthand like "font: 1rem/1.5 Inter" by checking only the size part.
         
+        Args:
+            font_size_value: Raw font-size value string
+            
         Returns:
-            List of rgba/rgb strings found in code
+            True if valid, False otherwise
         """
-        rgba_pattern = r'rgba?\([^)]+\)'
-        return re.findall(rgba_pattern, code)
+        # Take only the first token (handles "1rem/1.5" shorthand)
+        size_part = font_size_value.strip().lower().split('/')[0].split()[0]
+        return size_part in self.allowed_font_sizes
+    
+    def extract_hex_colors(self, code: str) -> List[str]:
+        """Extract all #-prefixed hex color values from code."""
+        return re.findall(r'#[0-9a-fA-F]{3,8}\b', code)
+    
+    def extract_bare_hex_colors(self, code: str) -> List[str]:
+        """
+        Extract bare hex values (without # prefix) from CSS color properties.
+        These indicate LLM generation errors.
+        Only checks known CSS color properties to avoid false positives.
+        """
+        color_props = r'(?:background-color|(?<!\w)color|border-color|outline-color|fill|stroke)'
+        pattern = rf'(?:{color_props}):\s*([0-9a-fA-F]{{6}}|[0-9a-fA-F]{{3}})\s*[;,\)]'
+        return re.findall(pattern, code)
+    
+    def extract_rgba_colors(self, code: str) -> List[str]:
+        """Extract all rgba/rgb color values from code."""
+        return re.findall(r'rgba?\([^)]+\)', code)
     
     def extract_box_shadows(self, code: str) -> List[str]:
-        """
-        Extract ALL box-shadow values from code.
-        
-        Returns:
-            List of box-shadow values found in code
-        """
+        """Extract all box-shadow values from code."""
         shadows = []
-        
-        # Match CSS syntax: box-shadow: value;
-        css_pattern = r'box-shadow:\s*([^;]+);'
-        shadows.extend(re.findall(css_pattern, code))
-        
-        # Match TypeScript object literal: 'box-shadow': 'value'
-        ts_pattern = r"['\"]box-shadow['\"]:\s*['\"]([^'\"]+)['\"]"
-        shadows.extend(re.findall(ts_pattern, code))
-        
+        shadows.extend(re.findall(r'box-shadow:\s*([^;]+);', code))
+        shadows.extend(re.findall(r"['\"]box-shadow['\"]:\s*['\"]([^'\"]+)['\"]", code))
         return shadows
     
     def extract_border_radius(self, code: str) -> List[str]:
-        """
-        Extract ALL border-radius values from code.
-        
-        Returns:
-            List of border-radius values found in code
-        """
-        radius_values = []
-        
-        # Match CSS syntax: border-radius: value;
-        css_pattern = r'border-radius:\s*([^;]+);'
-        radius_values.extend(re.findall(css_pattern, code))
-        
-        # Match TypeScript object literal: 'border-radius': 'value'
-        ts_pattern = r"['\"]border-radius['\"]:\s*['\"]([^'\"]+)['\"]"
-        radius_values.extend(re.findall(ts_pattern, code))
-        
-        return radius_values
+        """Extract all border-radius values from code."""
+        values = []
+        values.extend(re.findall(r'border-radius:\s*([^;]+);', code))
+        values.extend(re.findall(r"['\"]border-radius['\"]:\s*['\"]([^'\"]+)['\"]", code))
+        return values
     
     def extract_font_family(self, code: str) -> List[str]:
-        """
-        Extract ALL font-family declarations from code.
-        
-        Returns:
-            List of font-family values found in code
-        """
+        """Extract all font-family declarations from code."""
         fonts = []
-        
-        # Match CSS syntax: font-family: value;
-        css_pattern = r'font-family:\s*([^;]+);'
-        fonts.extend(re.findall(css_pattern, code))
-        
-        # Match TypeScript object literal: 'font-family': 'value'
-        ts_pattern = r"['\"]font-family['\"]:\s*['\"]([^'\"]+)['\"]"
-        fonts.extend(re.findall(ts_pattern, code))
-        
+        fonts.extend(re.findall(r'font-family:\s*([^;]+);', code))
+        fonts.extend(re.findall(r"['\"]font-family['\"]:\s*['\"]([^'\"]+)['\"]", code))
         return fonts
+    
+    def extract_font_sizes(self, code: str) -> List[str]:
+        """Extract all font-size values from code."""
+        sizes = []
+        sizes.extend(re.findall(r'font-size:\s*([^;]+);', code))
+        sizes.extend(re.findall(r"['\"]font-size['\"]:\s*['\"]([^'\"]+)['\"]", code))
+        return sizes
+    
+    def extract_spacing(self, code: str) -> List[str]:
+        """Extract all padding/margin values from code."""
+        values = []
+        values.extend(re.findall(r'(?:padding|margin)(?:-[a-z]+)?:\s*([^;]+);', code))
+        values.extend(re.findall(r"['\"](?:padding|margin)(?:-[a-z]+)?['\"]:\s*['\"]([^'\"]+)['\"]", code))
+        return values
     
     def validate(self, code: str) -> Tuple[bool, List[str]]:
         """
         STRICT validation against design system.
         STATELESS, EXHAUSTIVE, FULL-SCAN ON EVERY ITERATION.
+        No early returns. All checks always run.
         
         Args:
             code: Generated Angular component code
@@ -173,56 +211,84 @@ class CodeValidator:
         Returns:
             Tuple of (is_valid, list_of_errors)
         """
-        # CRITICAL: Clear ALL state at the start
         errors = []
         
-        # Run ALL checks EVERY TIME - NO EARLY RETURNS, NO SHORT-CIRCUITING
-        
-        # 1. STRICT HEX COLOR VALIDATION
-        hex_colors = self.extract_colors(code)
-        for color in hex_colors:
+        # 1. HEX COLOR VALIDATION
+        for color in self.extract_hex_colors(code):
             if color.lower() not in self.allowed_hex_colors:
-                errors.append(f"Unauthorized hex color: {color} (not in design system)")
+                errors.append(
+                    f"Unauthorized hex color: {color} "
+                    f"(allowed: {', '.join(sorted(self.allowed_hex_colors))})"
+                )
         
-        # 2. STRICT RGBA COLOR VALIDATION
-        rgba_colors = self.extract_rgba(code)
-        for rgba in rgba_colors:
+        # 2. BARE HEX DETECTION (missing # prefix - LLM generation error)
+        for hex_val in self.extract_bare_hex_colors(code):
+            errors.append(
+                f"Bare hex color detected: {hex_val} "
+                f"(missing # prefix - should be #{hex_val})"
+            )
+        
+        # 3. RGBA COLOR VALIDATION
+        for rgba in self.extract_rgba_colors(code):
             normalized = rgba.lower().replace(" ", "")
             if normalized not in self.allowed_rgba_colors:
-                errors.append(f"Unauthorized rgba color: {rgba} (not in design system)")
+                errors.append(
+                    f"Unauthorized rgba color: {rgba} "
+                    f"(allowed: {', '.join(sorted(self.allowed_rgba_colors))})"
+                )
         
-        # 3. STRICT BORDER RADIUS VALIDATION
-        border_radius_values = self.extract_border_radius(code)
-        for radius in border_radius_values:
+        # 4. BORDER RADIUS VALIDATION
+        for radius in self.extract_border_radius(code):
             radius_clean = radius.strip().lower()
             if radius_clean not in self.allowed_border_radius:
-                allowed = list(self.allowed_border_radius)[0]
-                errors.append(f"Invalid border-radius: {radius} (must be: {allowed})")
+                errors.append(
+                    f"Invalid border-radius: {radius} "
+                    f"(allowed: {', '.join(sorted(self.allowed_border_radius))})"
+                )
         
-        # 4. STRICT BOX SHADOW VALIDATION
-        shadows = self.extract_box_shadows(code)
-        for shadow in shadows:
+        # 5. BOX SHADOW VALIDATION
+        for shadow in self.extract_box_shadows(code):
             shadow_normalized = self._normalize_shadow(shadow)
             if shadow_normalized not in self.allowed_shadows_normalized:
-                allowed = list(self.allowed_shadows)[0]
-                errors.append(f"Invalid box-shadow: {shadow} (must be: {allowed})")
+                errors.append(
+                    f"Invalid box-shadow: {shadow.strip()} "
+                    f"(must be one of the design system shadow values)"
+                )
         
-        # 5. STRICT FONT-FAMILY VALIDATION (CRITICAL FIX)
-        # WHY: LLM pretraining bias causes it to emit fallback fonts like
-        # "Inter, system-ui, -apple-system, sans-serif" even when only "Inter" is allowed.
-        # This is a SYSTEM-LEVEL issue, not a user prompt issue.
-        # FIX: Detect component-level font-family and fail immediately.
-        fonts = self.extract_font_family(code)
-        for font in fonts:
+        # 6. FONT-FAMILY VALIDATION
+        # Font-family must not appear in component CSS at all (it's global)
+        for font in self.extract_font_family(code):
             font_clean = font.strip()
-            # Must match EXACTLY "Inter" (no commas, no fallbacks)
             if font_clean.lower() != self.allowed_font_family.lower():
-                errors.append(f"Invalid font-family: {font} (must be: {self.allowed_font_family})")
-                errors.append("NOTE: Typography is enforced globally. Do not include font-family in component CSS.")
+                errors.append(
+                    f"Invalid font-family: '{font_clean}' "
+                    f"(must be: {self.allowed_font_family})"
+                )
+            else:
+                # Even correct font-family in component CSS is wrong - it's global
+                errors.append(
+                    f"font-family should not be in component CSS "
+                    f"(typography is enforced globally - remove font-family entirely)"
+                )
         
-        # FINAL DECISION: valid = true ONLY if error_count == 0
+        # 7. FONT-SIZE VALIDATION
+        for size in self.extract_font_sizes(code):
+            if not self.validate_font_size_value(size):
+                errors.append(
+                    f"Invalid font-size: {size.strip()} "
+                    f"(allowed: {', '.join(sorted(self.allowed_font_sizes))})"
+                )
+        
+        # 8. SPACING VALIDATION (handles shorthand like "0.5rem 1rem")
+        for spacing in self.extract_spacing(code):
+            invalid_parts = self.validate_spacing_value(spacing)
+            for part in invalid_parts:
+                errors.append(
+                    f"Invalid spacing value: '{part}' in '{spacing.strip()}' "
+                    f"(allowed: {', '.join(sorted(self.allowed_spacing))})"
+                )
+        
         is_valid = len(errors) == 0
-        
         return is_valid, errors
     
     def get_validation_report(self, code: str) -> Dict[str, Any]:
@@ -234,15 +300,9 @@ class CodeValidator:
             code: Generated code to validate
             
         Returns:
-            Dictionary with:
-                - valid: bool (true ONLY if error_count == 0)
-                - error_count: int (total violations found)
-                - errors: List[str] (detailed error messages)
+            Dictionary with valid, error_count, and errors
         """
-        # CRITICAL: Fresh validation on every call
         is_valid, errors = self.validate(code)
-        
-        # TRUTHFUL report: valid = true ONLY if error_count == 0
         return {
             "valid": is_valid,
             "error_count": len(errors),

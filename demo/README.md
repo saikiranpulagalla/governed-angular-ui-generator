@@ -2,14 +2,14 @@
 
 ## ⚠️ IMPORTANT: This is NOT the Product
 
-This Streamlit app is an **OPTIONAL** visual debugger and trace viewer for the Guided Component Architect system.
+This Streamlit app is an **OPTIONAL** visual debugger and trace viewer for the Governed Angular UI Generator system.
 
 ### Backend-First Architecture
 
 The core system is **backend-first** and **CLI-based**:
 - `agent_loop.py` - Self-correcting orchestration loop
-- `generator.py` - Code generation agent
-- `validator.py` - Validation agent
+- `generator.py` - Code generation with LLM
+- `validator.py` - Design system validation
 - `design-system.json` - Design system tokens
 
 **The system works fully via CLI without this Streamlit interface.**
@@ -18,8 +18,9 @@ The core system is **backend-first** and **CLI-based**:
 
 This Streamlit app exists ONLY to:
 - Visualize agent execution steps
-- Inspect validation failures and retries
-- View generated code without running CLI
+- Inspect validation failures and self-corrections
+- View generated code in a structured format
+- Download code and preview in StackBlitz
 - Debug agent behavior during evaluation
 
 This is a **read-only visualizer**, not a code editor or production interface.
@@ -68,6 +69,7 @@ The Streamlit app:
 1. Calls `AgentLoop.run()` - the existing public function
 2. Receives the structured execution object
 3. Displays the results in a visual format
+4. Provides download and preview options
 
 **No logic is duplicated. No generation happens in Streamlit callbacks.**
 
@@ -99,14 +101,32 @@ streamlit>=1.28.0
 3. Enter a natural language UI description
 4. Click "Execute Agent Loop"
 5. Observe the execution trace and validation results
+6. Download code or preview in StackBlitz
 
 ### What You'll See
 
-- **Execution Summary**: Status, iterations, metrics
+- **Execution Summary**: Status, iterations used, max allowed
+- **User Prompt**: The input description you provided
 - **Agent Execution Trace**: Each iteration with validation results
 - **Validation Errors**: Detailed error messages per attempt
 - **Generated Code**: View code from each iteration
 - **Final Result**: Success/failure with final code
+- **Action Buttons**: Download component or open in StackBlitz
+
+### StackBlitz Preview
+
+The Streamlit app provides a one-click preview in StackBlitz:
+
+1. Click "🚀 Download StackBlitz Launcher"
+2. Open the downloaded `open-in-stackblitz.html` file in your browser
+3. StackBlitz opens automatically with your component loaded
+4. Edit and preview the component live
+
+The launcher HTML includes:
+- Your generated Angular component
+- Complete Angular module setup
+- Global styles with Inter font
+- Auto-submit form for seamless StackBlitz integration
 
 ### Evaluation Workflow
 
@@ -119,6 +139,13 @@ python main.py "A login card with glassmorphism effect"
 ```bash
 streamlit run demo/streamlit_app.py
 ```
+
+### Session State Management
+
+The Streamlit app uses session state to persist results across reruns:
+- Results remain visible after clicking buttons
+- No data loss when interacting with widgets
+- Clean separation between input and display
 
 ### If Streamlit is Removed
 
@@ -134,6 +161,7 @@ This UI follows strict constraints:
 - No animations or product UI metaphors
 - Resembles an internal engineering debugger
 - Read-only visualization only
+- Minimal dependencies
 
 ### Signaling to Evaluators
 
@@ -143,10 +171,10 @@ The agentic loop (`agent_loop.py`) is the primary artifact. The UI is a non-esse
 
 The system is designed to be evaluated primarily through:
 1. CLI execution (`main.py`)
-2. Test suite (`test_system.py`)
-3. Code review of core modules
+2. Code review of core modules
+3. Validation test suite
 
-The Streamlit app is provided as an optional convenience for visualizing agent behavior.
+The Streamlit app is provided as an optional convenience for visualizing agent behavior and previewing generated components.
 
 ---
 

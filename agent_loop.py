@@ -25,8 +25,10 @@ class AgentLoop:
         
         Args:
             design_system_path: Path to design system JSON
-            api_key: OpenAI API key
-            max_retries: Maximum correction attempts (default: 2)
+            api_key: Google API key
+            max_retries: Maximum total iterations (generation + correction attempts)
+                        Example: max_retries=2 means 1 generation + 1 correction attempt
+                        Example: max_retries=3 means 1 generation + 2 correction attempts
         """
         self.generator = CodeGenerator(design_system_path, api_key)
         self.validator = CodeValidator(design_system_path)
