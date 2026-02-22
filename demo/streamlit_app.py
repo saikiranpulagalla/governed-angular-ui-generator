@@ -160,16 +160,34 @@ def _build_angular_files(component_code: str) -> dict:
                     "sourceRoot": "src",
                     "architect": {
                         "build": {
-                            "builder": "@angular-devkit/build-angular:application",
+                            # Use classic "browser" builder, NOT "application".
+                            # "application" is the Angular 17 standalone builder.
+                            # "browser" is the classic NgModule builder — matches
+                            # our AppModule setup and CodeSandbox's Angular template.
+                            # With "browser" builder the entry point key is "main",
+                            # NOT "browser" (that key belongs to the new builder only).
+                            "builder": "@angular-devkit/build-angular:browser",
                             "options": {
                                 "outputPath": "dist/app",
                                 "index": "src/index.html",
-                                "browser": "src/main.ts",
+                                "main": "src/main.ts",
                                 "polyfills": ["zone.js"],
                                 "tsConfig": "tsconfig.json",
+                                "inlineStyleLanguage": "css",
+                                "assets": [],
                                 "styles": ["src/styles.css"],
                                 "scripts": []
-                            }
+                            },
+                            "configurations": {
+                                "production": {"outputHashing": "all"},
+                                "development": {
+                                    "buildOptimizer": False,
+                                    "optimization": False,
+                                    "sourceMap": True,
+                                    "namedChunks": True
+                                }
+                            },
+                            "defaultConfiguration": "production"
                         },
                         "serve": {
                             "builder": "@angular-devkit/build-angular:dev-server",
