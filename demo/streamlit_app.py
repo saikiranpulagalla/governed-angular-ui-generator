@@ -4,13 +4,15 @@ Streamlit Inspection Layer for Governed Angular UI Generator
 IMPORTANT: This is NOT the product. This is a read-only visual debugger.
 The core system (agent_loop.py, generator.py, validator.py) is backend-first.
 This UI exists ONLY to visualize agent execution for evaluation purposes.
-
-The system works fully via CLI without this interface.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import sys
 import os
+import json
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -18,31 +20,213 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agent_loop import AgentLoop
 
 
-def build_stackblitz_launcher(component_code: str) -> str:
+# ---------------------------------------------------------------------------
+# CodeSandbox API
+# WHY CodeSandbox instead of StackBlitz:
+# StackBlitz requires a form POST from the browser — impossible from inside
+# Streamlit's sandboxed iframe. CodeSandbox has a server-side POST API that
+# Python calls directly, returning a sandbox URL. We then show it with
+# st.link_button (renders in Streamlit's main DOM, not iframe) and embed
+# it inline with st.components.v1.iframe (src= GET request, no JS needed).
+# Zero popup blockers. Zero sandbox restrictions. Live preview in the page.
+# ---------------------------------------------------------------------------
+
+def create_codesandbox(component_code: str) -> str | None:
     """
-    Build a self-contained HTML launcher that opens StackBlitz when opened in a browser.
+    Create a CodeSandbox project via their define API and return the sandbox URL.
 
-    WHY THIS APPROACH:
-    Streamlit's components.html() renders inside a sandboxed iframe that is missing
-    the 'allow-popups-to-escape-sandbox' attribute. This means:
-    - window.open() opens a blank tab that can't receive form submissions
-    - form.submit() with target="_blank" is blocked as a popup
-    - External SDK scripts are blocked by Streamlit Cloud's CSP
-    All JavaScript-based approaches fail inside Streamlit's iframe.
-
-    THE SOLUTION:
-    Generate a standalone HTML file the user downloads and opens directly in their
-    browser. Outside any iframe, a plain form.submit() navigates to StackBlitz with
-    no restrictions whatsoever. This is 100% reliable on every browser.
-
-    The HTML auto-submits on load — user just opens the file and StackBlitz appears.
+    This is a server-side Python HTTP request — completely unaffected by
+    browser sandbox restrictions.
 
     Args:
         component_code: Generated Angular TypeScript component code
 
     Returns:
-        HTML string for the launcher file
+        Sandbox URL string, or None if the API call fails
     """
+    # Extract the selector from the component to use in index.html
+    import re
+    selector_match = re.search(r"selector:\s*['\"]([^'\"]+)['\"]", component_code)
+    selector = selector_match.group(1) if selector_match else "app-root"
+
+    files = {
+        "src/app/app.component.ts": {
+            "content": component_code
+        },
+        "src/app/app.module.ts": {
+            "content": (
+                "import { NgModule } from '@angular/core';\n"
+                "import { BrowserModule } from '@angular/platform-browser';\n"
+                "import { AppComponent } from './app.component';\n\n"
+                "@NgModule({\n"
+                "  declarations: [AppComponent],\n"
+                "  imports: [BrowserModule],\n"
+                "  bootstrap: [AppComponent]\n"
+                "})\n"
+                "export class AppModule {}\n"
+            )
+        },
+        "src/main.ts": {
+            "content": (
+                "import { platformBrowserDynamic } from '@angular/platform-browser-dynamic';\n"
+                "import { AppModule } from './app/app.module';\n"
+                "platformBrowserDynamic().bootstrapModule(AppModule)\n"
+                "  .catch(err => console.error(err));\n"
+            )
+        },
+        "src/index.html": {
+            "content": (
+                "<!doctype html>\n"
+                "<html lang=\"en\">\n"
+                "<head>\n"
+                "  <meta charset=\"utf-8\">\n"
+                "  <title>Angular Component Preview</title>\n"
+                "  <base href=\"/\">\n"
+                "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+                "</head>\n"
+                "<body>\n"
+                f"  <{selector}></{selector}>\n"
+                "</body>\n"
+                "</html>\n"
+            )
+        },
+        "src/styles.css": {
+            "content": (
+                "@import url('https://fonts.googleapis.com/css2?family=Inter:"
+                "wght@400;500;600;700&display=swap');\n\n"
+                "* { font-family: 'Inter', sans-serif; "
+                "box-sizing: border-box; margin: 0; padding: 0; }\n\n"
+                "body { background-color: #0f172a; "
+                "color: #f1f5f9; padding: 2rem; }\n"
+            )
+        },
+        "tsconfig.json": {
+            "content": json.dumps({
+                "compileOnSave": False,
+                "compilerOptions": {
+                    "outDir": "./dist/out-tsc",
+                    "forceConsistentCasingInFileNames": True,
+                    "strict": True,
+                    "noImplicitOverride": True,
+                    "noPropertyAccessFromIndexSignature": True,
+                    "noImplicitReturns": True,
+                    "noFallthroughCasesInSwitch": True,
+                    "esModuleInterop": True,
+                    "sourceMap": True,
+                    "declaration": False,
+                    "downlevelIteration": True,
+                    "experimentalDecorators": True,
+                    "moduleResolution": "node",
+                    "importHelpers": True,
+                    "target": "ES2022",
+                    "module": "ES2022",
+                    "useDefineForClassFields": False,
+                    "lib": ["ES2022", "dom"]
+                }
+            }, indent=2)
+        },
+        "package.json": {
+            "content": json.dumps({
+                "name": "angular-component-preview",
+                "version": "0.0.0",
+                "scripts": {
+                    "ng": "ng",
+                    "start": "ng serve",
+                    "build": "ng build"
+                },
+                "dependencies": {
+                    "@angular/animations": "^17.0.0",
+                    "@angular/common": "^17.0.0",
+                    "@angular/compiler": "^17.0.0",
+                    "@angular/core": "^17.0.0",
+                    "@angular/platform-browser": "^17.0.0",
+                    "@angular/platform-browser-dynamic": "^17.0.0",
+                    "rxjs": "~7.8.0",
+                    "tslib": "^2.3.0",
+                    "zone.js": "~0.14.0"
+                },
+                "devDependencies": {
+                    "@angular/cli": "^17.0.0",
+                    "@angular/compiler-cli": "^17.0.0",
+                    "typescript": "~5.2.0"
+                }
+            }, indent=2)
+        },
+        "angular.json": {
+            "content": json.dumps({
+                "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+                "version": 1,
+                "newProjectRoot": "projects",
+                "projects": {
+                    "app": {
+                        "projectType": "application",
+                        "root": "",
+                        "sourceRoot": "src",
+                        "architect": {
+                            "build": {
+                                "builder": "@angular-devkit/build-angular:application",
+                                "options": {
+                                    "outputPath": "dist/app",
+                                    "index": "src/index.html",
+                                    "browser": "src/main.ts",
+                                    "polyfills": ["zone.js"],
+                                    "tsConfig": "tsconfig.json",
+                                    "styles": ["src/styles.css"],
+                                    "scripts": []
+                                }
+                            },
+                            "serve": {
+                                "builder": "@angular-devkit/build-angular:dev-server",
+                                "configurations": {
+                                    "production": {"buildTarget": "app:build:production"},
+                                    "development": {"buildTarget": "app:build:development"}
+                                },
+                                "defaultConfiguration": "development"
+                            }
+                        }
+                    }
+                }
+            }, indent=2)
+        }
+    }
+
+    payload = json.dumps({"files": files}).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            "https://codesandbox.io/api/v1/sandboxes/define?json=1",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            result = json.loads(response.read())
+            sandbox_id = result.get("sandbox_id")
+            if sandbox_id:
+                return f"https://codesandbox.io/s/{sandbox_id}"
+            return None
+    except urllib.error.URLError as e:
+        return None
+    except Exception:
+        return None
+
+
+def get_embed_url(sandbox_url: str) -> str:
+    """Convert a CodeSandbox URL to an embed URL."""
+    sandbox_id = sandbox_url.rstrip("/").split("/")[-1]
+    return (
+        f"https://codesandbox.io/embed/{sandbox_id}"
+        f"?fontsize=14&hidenavigation=1&theme=dark"
+        f"&view=preview&codemirror=1"
+    )
+
+
+def build_stackblitz_launcher(component_code: str) -> str:
+    """
+    Fallback: build a standalone HTML file that opens StackBlitz when
+    opened directly in a browser (outside any iframe).
+    """
+    import re
     files = {
         "src/app/app.component.ts": component_code,
         "src/app/app.module.ts": (
@@ -58,22 +242,17 @@ def build_stackblitz_launcher(component_code: str) -> str:
         ),
         "src/styles.css": (
             "@import url('https://fonts.googleapis.com/css2?family=Inter:"
-            "wght@400;500;600;700&display=swap');\n\n"
+            "wght@400;500;600;700&display=swap');\n"
             "* { font-family: 'Inter', sans-serif; box-sizing: border-box; "
-            "margin: 0; padding: 0; }\n\n"
+            "margin: 0; padding: 0; }\n"
             "body { background-color: #0f172a; color: #f1f5f9; padding: 2rem; }\n"
         ),
     }
 
     inputs = ""
     for path, content in files.items():
-        safe = (
-            content
-            .replace("&", "&amp;")
-            .replace('"', "&quot;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        safe = (content.replace("&", "&amp;").replace('"', "&quot;")
+                .replace("<", "&lt;").replace(">", "&gt;"))
         inputs += (
             f'    <input type="hidden" name="project[files][{path}]" '
             f'value="{safe}">\n'
@@ -85,30 +264,16 @@ def build_stackblitz_launcher(component_code: str) -> str:
   <meta charset="utf-8">
   <title>Opening StackBlitz...</title>
   <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #0f172a; color: #f1f5f9;
-      display: flex; justify-content: center; align-items: center;
-      min-height: 100vh;
-    }}
-    .card {{
-      text-align: center; padding: 2.5rem 2rem;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 12px; max-width: 420px; width: 90%;
-    }}
-    .spinner {{
-      width: 44px; height: 44px;
-      border: 3px solid rgba(99,102,241,0.25);
-      border-top-color: #6366f1;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin: 0 auto 1.5rem;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    h2 {{ font-size: 1.25rem; margin-bottom: 0.5rem; color: #f1f5f9; }}
-    p {{ color: #94a3b8; font-size: 0.875rem; line-height: 1.5; }}
+    * {{ box-sizing:border-box; margin:0; padding:0; }}
+    body {{ font-family:sans-serif; background:#0f172a; color:#f1f5f9;
+            display:flex; justify-content:center; align-items:center; min-height:100vh; }}
+    .card {{ text-align:center; padding:2.5rem 2rem;
+              background:rgba(255,255,255,0.05); border-radius:12px; max-width:420px; }}
+    .spinner {{ width:44px; height:44px; border:3px solid rgba(99,102,241,0.25);
+                border-top-color:#6366f1; border-radius:50%;
+                animation:spin 0.8s linear infinite; margin:0 auto 1.5rem; }}
+    @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
+    p {{ color:#94a3b8; font-size:0.875rem; margin-top:0.5rem; }}
   </style>
 </head>
 <body>
@@ -117,19 +282,12 @@ def build_stackblitz_launcher(component_code: str) -> str:
     <h2>Opening StackBlitz...</h2>
     <p>Your Angular component is loading.<br>You can close this tab afterward.</p>
   </div>
-
   <form id="sb" method="POST" action="https://stackblitz.com/run">
     <input type="hidden" name="project[title]" value="Generated Angular Component">
-    <input type="hidden" name="project[description]"
-           value="Auto-generated by Governed Angular UI Generator">
     <input type="hidden" name="project[template]" value="angular-cli">
 {inputs}
   </form>
-
   <script>
-    // No target="_blank" — this file opens in its own browser tab.
-    // Direct submit navigates this tab straight to StackBlitz.
-    // No popup blockers, no iframe sandbox, no CSP issues.
     window.addEventListener('load', function() {{
       document.getElementById('sb').submit();
     }});
@@ -139,26 +297,22 @@ def build_stackblitz_launcher(component_code: str) -> str:
 
 
 def main():
-    """Streamlit app for visualizing agent execution."""
-
     st.title("Agent Execution Inspector")
     st.caption("Read-only debugger for agentic code generation system")
 
     st.warning(
         "⚠️ This is an OPTIONAL inspection tool. "
-        "The core system is backend-first and CLI-based. "
-        "This UI is for visualization only."
+        "The core system is backend-first and CLI-based."
     )
 
-    # Session state init
-    # Required because Streamlit reruns the entire script on every widget interaction.
-    # Without session_state, clicking any button after generation loses the result.
+    # Session state — persists result across Streamlit reruns
     if "result" not in st.session_state:
         st.session_state.result = None
     if "last_prompt" not in st.session_state:
         st.session_state.last_prompt = None
+    if "sandbox_url" not in st.session_state:
+        st.session_state.sandbox_url = None
 
-    # Sidebar
     with st.sidebar:
         st.header("Configuration")
 
@@ -167,37 +321,27 @@ def main():
             type="password",
             help="Required for code generation with Gemini"
         )
-
         model_name = st.text_input(
             "Model Name",
             value="gemini-2.5-flash-lite",
             help="Gemini model to use"
         )
-
         max_retries = st.number_input(
             "Max Retries",
-            min_value=1,
-            max_value=5,
-            value=2,
+            min_value=1, max_value=5, value=2,
             help="Maximum total iterations (1 generation + N-1 corrections)"
         )
-
-        verbose = st.checkbox(
-            "Verbose Mode",
-            value=False,
-            help="Print execution logs to console"
-        )
+        verbose = st.checkbox("Verbose Mode", value=False)
 
         st.divider()
         st.caption("Backend-First Architecture")
         st.caption("Agent loop is the primary artifact")
         st.caption("UI is non-essential inspection tool")
 
-    # Input
     st.header("1. Input Prompt")
     user_prompt = st.text_area(
         "Natural Language UI Description",
-        placeholder="Example: A dashboard page with a card showing product name and price",
+        placeholder="Example: A login card with email and password fields, no interactions",
         height=100
     )
 
@@ -207,6 +351,9 @@ def main():
         else:
             if model_name:
                 os.environ["MODEL_NAME"] = model_name
+
+            # Reset sandbox on new generation
+            st.session_state.sandbox_url = None
 
             with st.spinner("Initializing agent loop..."):
                 try:
@@ -229,21 +376,27 @@ def main():
             st.session_state.result = result
             st.session_state.last_prompt = user_prompt
 
-    # Display results (persists across reruns via session_state)
+            # If generation succeeded, create CodeSandbox in the background
+            if result.get("success") and result.get("code"):
+                with st.spinner("Creating live preview..."):
+                    sandbox_url = create_codesandbox(result["code"])
+                    st.session_state.sandbox_url = sandbox_url
+
     if st.session_state.result is not None:
         display_execution_results(
             st.session_state.result,
             st.session_state.last_prompt,
+            st.session_state.sandbox_url,
             max_retries
         )
 
 
-def display_execution_results(result: dict, prompt: str, max_retries: int):
-    """
-    Display execution results. Called on every rerun while session_state.result exists.
-    Read-only — no generation logic here.
-    """
-
+def display_execution_results(
+    result: dict,
+    prompt: str,
+    sandbox_url: str | None,
+    max_retries: int
+):
     st.header("2. Execution Summary")
 
     col1, col2, col3 = st.columns(3)
@@ -257,7 +410,6 @@ def display_execution_results(result: dict, prompt: str, max_retries: int):
     st.subheader("User Prompt")
     st.code(prompt, language=None)
 
-    # Execution trace
     st.header("3. Agent Execution Trace")
     history = result.get("history", [])
 
@@ -295,7 +447,6 @@ def display_execution_results(result: dict, prompt: str, max_retries: int):
             with st.expander("Raw Validation Report"):
                 st.json(validation_report)
 
-    # Final result
     st.header("4. Final Result")
 
     if result["success"]:
@@ -305,44 +456,72 @@ def display_execution_results(result: dict, prompt: str, max_retries: int):
 
         final_code = result.get("code", "")
         if final_code:
-            st.subheader("Final Generated Code")
+            st.subheader("Generated Code")
             with st.expander("📄 View Full Code", expanded=True):
                 st.code(final_code, language="typescript", line_numbers=True)
-
             st.caption(f"Code length: {len(final_code)} characters")
 
-            st.divider()
-            st.subheader("Export Options")
+            # ---------------------------------------------------------------
+            # LIVE PREVIEW SECTION
+            # ---------------------------------------------------------------
+            st.subheader("🚀 Live Preview")
 
-            col1, col2 = st.columns(2)
+            if sandbox_url:
+                embed_url = get_embed_url(sandbox_url)
 
-            with col1:
-                # Download the .ts component file
-                st.download_button(
-                    label="📥 Download Component (.ts)",
-                    data=final_code,
-                    file_name="generated.component.ts",
-                    mime="text/plain",
-                    use_container_width=True
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.link_button(
+                        "🔗 Open in CodeSandbox",
+                        sandbox_url,
+                        use_container_width=True
+                    )
+                with col2:
+                    launcher = build_stackblitz_launcher(final_code)
+                    st.download_button(
+                        "📦 Download StackBlitz Launcher",
+                        data=launcher,
+                        file_name="open-in-stackblitz.html",
+                        mime="text/html",
+                        use_container_width=True
+                    )
+
+                st.info(
+                    "Live preview below — your Angular component running in CodeSandbox. "
+                    "First load takes ~30 seconds while Angular compiles."
                 )
 
-            with col2:
-                # Download the StackBlitz launcher HTML
-                # User opens this file -> StackBlitz opens automatically
-                launcher_html = build_stackblitz_launcher(final_code)
+                # Embed the live running component directly in the page
+                components.iframe(
+                    src=embed_url,
+                    height=500,
+                    scrolling=True
+                )
+
+            else:
+                st.warning(
+                    "Live preview unavailable — CodeSandbox API could not be reached. "
+                    "Use the download option below."
+                )
+                launcher = build_stackblitz_launcher(final_code)
                 st.download_button(
-                    label="🚀 Download StackBlitz Launcher",
-                    data=launcher_html,
+                    "📦 Download StackBlitz Launcher",
+                    data=launcher,
                     file_name="open-in-stackblitz.html",
-                    mime="text/html",
-                    use_container_width=True
+                    mime="text/html"
+                )
+                st.caption(
+                    "Open the downloaded file in your browser — "
+                    "StackBlitz loads your component automatically."
                 )
 
-            # Clear instructions so user knows what to do
-            st.info(
-                "**To preview in StackBlitz:** Click '🚀 Download StackBlitz Launcher', "
-                "then open the downloaded `open-in-stackblitz.html` file in your browser. "
-                "StackBlitz will open automatically with your component loaded."
+            # Download component file
+            st.divider()
+            st.download_button(
+                label="📥 Download Component (.ts)",
+                data=final_code,
+                file_name="generated.component.ts",
+                mime="text/plain"
             )
 
     else:
@@ -362,8 +541,7 @@ def display_execution_results(result: dict, prompt: str, max_retries: int):
 if __name__ == "__main__":
     if not os.path.exists("design-system.json"):
         st.error(
-            "❌ design-system.json not found. "
-            "Run from the project root:\n\n"
+            "❌ design-system.json not found. Run from project root:\n\n"
             "```\nstreamlit run demo/streamlit_app.py\n```"
         )
         st.stop()
