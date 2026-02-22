@@ -48,7 +48,13 @@ def _extract_component_info(component_code: str) -> tuple[str, str]:
 def _build_angular_files(component_code: str) -> dict:
     """
     Build a complete minimal Angular project file set for the given component.
-    All files use the actual class name and selector extracted from the component.
+
+    IMPORTANT — selector patching:
+    CodeSandbox's Angular template always uses <app-root> in its built-in index.html.
+    When files are sent via the API they merge with the template, and the template's
+    index.html wins. Rather than fight this, we patch the component selector to
+    'app-root' in the files sent to CodeSandbox so Angular finds the element.
+    The original component code (downloaded by the user) is never modified.
 
     Args:
         component_code: Generated Angular TypeScript component code
@@ -56,10 +62,19 @@ def _build_angular_files(component_code: str) -> dict:
     Returns:
         Dict mapping file paths to their string content
     """
-    class_name, selector = _extract_component_info(component_code)
+    class_name, _ = _extract_component_info(component_code)
+
+    # Patch selector to 'app-root' for CodeSandbox compatibility
+    # CodeSandbox's index.html always has <app-root> — we match it
+    codesandbox_code = re.sub(
+        r"(selector:\s*['\"])([^'\"]+)(['\"])",
+        r"\1app-root\3",
+        component_code
+    )
+    selector = "app-root"
 
     return {
-        "src/app/app.component.ts": component_code,
+        "src/app/app.component.ts": codesandbox_code,  # selector patched to app-root
 
         "src/app/app.module.ts": "\n".join([
             "import { NgModule } from '@angular/core';",
@@ -91,7 +106,7 @@ def _build_angular_files(component_code: str) -> dict:
             '  <meta name="viewport" content="width=device-width, initial-scale=1">',
             "</head>",
             "<body>",
-            f"  <{selector}></{selector}>",
+            "  <app-root></app-root>",  # Always app-root — matches CodeSandbox template
             "</body>",
             "</html>",
         ]),
